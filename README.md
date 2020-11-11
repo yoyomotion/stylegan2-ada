@@ -1,8 +1,8 @@
-## Edits I made to this repo
+# Edits I made to this repo
 * bug fixes regarding saving and using npy vector files.
 * added helpful changes to the generate.py
 
-# dvschultz Original Edits
+## dvschultz Original Edits
 
 * **Fakes .jpg**: save yourself a ton of space with fakes during training saved as .jpg instead of .png
 * **Default GPU-based configs**: added configs to maximize GPU usage for 11GB. 24GB, and 48GB cards (use 11GB for 16GB cards)
