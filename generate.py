@@ -19,6 +19,8 @@ import re
 import scipy
 import numpy as np
 import PIL.Image
+from PIL import ImageFont
+from PIL import ImageDraw
 
 import dnnlib
 import dnnlib.tflib as tflib
@@ -32,6 +34,14 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 #----------------------------------------------------------------------------
+
+def draw_label_on_image(image, label):
+    tempImg = PIL.Image.fromarray(image, 'RGB')
+    drawImg = ImageDraw.Draw(tempImg)
+    fontImg = ImageFont.truetype("arial.ttf", 100)
+    drawImg.text((3, 3),str(label),(0,0,0), font = fontImg)
+    drawImg.text((0, 0),str(label),(255,255,255), font = fontImg)
+    return np.asarray(tempImg)
 
 def create_image_grid(images, grid_size=None):
     '''
@@ -61,7 +71,7 @@ def create_image_grid(images, grid_size=None):
 
 #----------------------------------------------------------------------------
 
-def generate_images(network_pkl, seeds, truncation_psi, outdir, class_idx=None, dlatents_npz=None, grid=False):
+def generate_images(network_pkl, seeds, truncation_psi, outdir, class_idx=None, dlatents_npz=None, grid=False, draw_label=False):
     tflib.init_tf()
     print('Loading networks from "%s"...' % network_pkl)
     with dnnlib.util.open_url(network_pkl) as fp:
@@ -106,8 +116,14 @@ def generate_images(network_pkl, seeds, truncation_psi, outdir, class_idx=None, 
         z = rnd.randn(1, *Gs.input_shape[1:]) # [minibatch, component]
         tflib.set_vars({var: rnd.randn(*var.shape.as_list()) for var in noise_vars}) # [height, width]
         image = Gs.run(z, label, **Gs_kwargs) # [minibatch, height, width, channel]
+        
+        if(draw_label): # Labeling each image with the seed number
+          image[0] = draw_label_on_image(image[0], seed)
+
         images.append(image[0])
-        PIL.Image.fromarray(image[0], 'RGB').save(f'{outdir}/seed{seed:04d}.png')
+
+        if not grid: # Don't save image if grid is enabled
+          PIL.Image.fromarray(image[0], 'RGB').save(f'{outdir}/seed{seed:04d}.png')
 
     # If user wants to save a grid of the generated images
     if grid:
@@ -122,7 +138,7 @@ def truncation_traversal(network_pkl,npys,outdir,class_idx=None, seed=[0],start=
     with dnnlib.util.open_url(network_pkl) as fp:
         _G, _D, Gs = pickle.load(fp)
 
-    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(f'{outdir}/frames', exist_ok=True)
 
     Gs_kwargs = {
         'output_transform': dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True),
@@ -147,12 +163,12 @@ def truncation_traversal(network_pkl,npys,outdir,class_idx=None, seed=[0],start=
         tflib.set_vars({var: rnd.randn(*var.shape.as_list()) for var in noise_vars}) # [height, width]
         image = Gs.run(z, label, **Gs_kwargs) # [minibatch, height, width, channel]
         images.append(image[0])
-        PIL.Image.fromarray(image[0], 'RGB').save(f'{outdir}/frame{count:05d}.png')
+        PIL.Image.fromarray(image[0], 'RGB').save(f'{outdir}/frames/frame{count:05d}.png')
 
         trunc+=increment
         count+=1
 
-    cmd="ffmpeg -y -r {} -i {}/frame%05d.png -vcodec libx264 -pix_fmt yuv420p {}/truncation-traversal-seed{}-start{}-stop{}.mp4".format(framerate,outdir,outdir,seed[0],start,stop)
+    cmd="ffmpeg -y -r {} -i {}/frames/frame%05d.png -vcodec libx264 -pix_fmt yuv420p {}/truncation-traversal-seed{}-start{}-stop{}.mp4".format(framerate,outdir,outdir,seed[0],start,stop)
     subprocess.call(cmd, shell=True)
 
 #----------------------------------------------------------------------------
@@ -222,6 +238,8 @@ def generate_latent_images(zs, truncation_psi, outdir, save_npy,prefix,vidname,f
     if not isinstance(truncation_psi, list):
         truncation_psi = [truncation_psi] * len(zs)
 
+    os.makedirs(f'{outdir}/frames', exist_ok=True)
+
     for z_idx, z in enumerate(zs):
         if isinstance(z,list):
           z = np.array(z).reshape(1,512)
@@ -232,11 +250,12 @@ def generate_latent_images(zs, truncation_psi, outdir, save_npy,prefix,vidname,f
         noise_rnd = np.random.RandomState(1) # fix noise
         tflib.set_vars({var: noise_rnd.randn(*var.shape.as_list()) for var in noise_vars}) # [height, width]
         images = Gs.run(z, None, **Gs_kwargs) # [minibatch, height, width, channel]
-        PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/{prefix}{z_idx:05d}.png')
+        PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/frames/{prefix}{z_idx:05d}.png')
+        
         if save_npy:
           np.save(dnnlib.make_run_dir_path('%s%05d.npy' % (prefix,z_idx)), z)
 
-    cmd="ffmpeg -y -r {} -i {}/{}%05d.png -vcodec libx264 -pix_fmt yuv420p {}/walk-{}-{}fps.mp4".format(framerate,outdir,prefix,outdir,vidname,framerate)
+    cmd="ffmpeg -y -r {} -i {}/frames/{}%05d.png -vcodec libx264 -pix_fmt yuv420p {}/walk-{}-{}fps.mp4".format(framerate,outdir,prefix,outdir,vidname,framerate)
     subprocess.call(cmd, shell=True)
 
 def generate_images_in_w_space(ws, truncation_psi,outdir,save_npy,prefix,vidname,framerate):
@@ -307,8 +326,8 @@ def generate_latent_walk(network_pkl, truncation_psi, outdir, walk_type, frames,
           zpoints = line_interpolate(zs,number_of_steps)
 
         else:
-          points = line_interpolate(zs,number_of_steps)
-
+          points = line_interpolate(ws,number_of_steps)
+        
 
     # from Gene Kogan
     elif wt[0] == 'bspline':
@@ -357,7 +376,7 @@ def generate_latent_walk(network_pkl, truncation_psi, outdir, walk_type, frames,
 
 #----------------------------------------------------------------------------
 
-def generate_neighbors(network_pkl, seeds, npys, diameter, truncation_psi, num_samples, save_vector, outdir):
+def generate_neighbors(network_pkl, seeds, npys, diameter, truncation_psi, num_samples, save_vector, outdir, grid, draw_label):
     global _G, _D, Gs, noise_vars
     tflib.init_tf()
     print('Loading networks from "%s"...' % network_pkl)
@@ -376,28 +395,46 @@ def generate_neighbors(network_pkl, seeds, npys, diameter, truncation_psi, num_s
     noise_vars = [var for name, var in Gs.components.synthesis.vars.items() if name.startswith('noise')]
 
     for seed_idx, seed in enumerate(seeds):
-        print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx+1, len(seeds)))
+        print('Generating neighbors for seed %d (%d/%d) ...' % (seed, seed_idx+1, len(seeds)))
         rnd = np.random.RandomState(seed)
+
+        os.makedirs(f'{outdir}/seed{seed}', exist_ok=True)
 
         og_z = rnd.randn(1, *Gs.input_shape[1:]) # [minibatch, component]
         tflib.set_vars({var: rnd.randn(*var.shape.as_list()) for var in noise_vars}) # [height, width]
         images = Gs.run(og_z, None, **Gs_kwargs) # [minibatch, height, width, channel]
-        # PIL.Image.fromarray(images[0], 'RGB').save(dnnlib.make_run_dir_path('seed%04d.png' % seed))
-        PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/seed{seed:05d}.png')
+
+        if(draw_label): # Labeling original seed 
+          images[0] = draw_label_on_image(images[0], f'seed{seed}')
+
+        grid_images = []
+        grid_images.append(images[0]) # Add original seed as first image on grid
+
+        if not grid: # Save original seed image if grid is false
+          PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/seed{seed}/seed{seed}.png')
 
         zs = []
-        z_prefix = 'seed%04d_neighbor' % seed
+        s_prefix = f'seed{seed}_n'
 
         for s in range(num_samples):
             random = np.random.uniform(-diameter,diameter,[1,512])
 #             zs.append(np.clip((og_z+random),-1,1))
             new_z = np.clip(np.add(og_z,random),-1,1)
             images = Gs.run(new_z, None, **Gs_kwargs) # [minibatch, height, width, channel]
-            # PIL.Image.fromarray(images[0], 'RGB').save(dnnlib.make_run_dir_path('%s%04d.png' % (z_prefix,s)))
-            PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/{z_prefix}{s:05d}.png')
-            # generate_latent_images(zs, truncation_psi, save_vector, z_prefix)
+
+            if(draw_label): # Labeling original seed 
+              images[0] = draw_label_on_image(images[0], f'n{s+1}')
+
+            grid_images.append(images[0]) # Add neighbor image to grid
+            if not grid: # Save neighbor images if grid is false
+              PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/seed{seed}/{s_prefix}{s+1}.png')
+            
             if save_vector:
-                np.save(dnnlib.make_run_dir_path('%s%05d.npy' % (z_prefix,s)), new_z)
+                np.save(f'{outdir}/seed{seed}/n{s+1}', new_z)
+        
+        if grid:
+          print('Generating image grid...')
+          PIL.Image.fromarray(create_image_grid(np.array(grid_images)), 'RGB').save(f'{outdir}/seed{seed}/seed{seed}_neighbor_grid.png')
 
 
 
@@ -575,7 +612,6 @@ def _parse_npy_files(files):
     '''Accept a comma separated list of npy files and return a list of z vectors.'''
 
     zs =[]
-
     file_list = files.split(",")
 
 
@@ -628,7 +664,8 @@ def main():
     parser_generate_images.add_argument('--seeds', type=_parse_num_range, help='List of random seeds', dest='seeds', required=True)
     parser_generate_images.add_argument('--truncation-psi', type=float, help='Truncation psi (default: %(default)s)', dest='truncation_psi', default=0.5)
     parser_generate_images.add_argument('--class', dest='class_idx', type=int, help='Class label (default: unconditional)')
-    parser_generate_images.add_argument('--create-grid', action='store_true', help='Add flag to save the generated images in a grid', dest='grid')
+    parser_generate_images.add_argument('--grid', action='store_true', help='Add flag to save the generated images in a grid', dest='grid')
+    parser_generate_images.add_argument('--label', action='store_true', help='Add flag to draw the the seed number on each image', dest='draw_label')
     parser_generate_images.add_argument('--outdir', help='Root directory for run results (default: %(default)s)', default='out', metavar='DIR')
     parser_generate_images.set_defaults(func=generate_images)
 
@@ -666,6 +703,8 @@ def main():
     parser_generate_neighbors.add_argument('--num_samples', type=int, help='How many neighbors to generate (default: %(default)s', default=25)
     parser_generate_neighbors.add_argument('--trunc', type=float, help='Truncation psi (default: %(default)s)', dest='truncation_psi', default=0.5)
     parser_generate_neighbors.add_argument('--outdir', help='Root directory for run results (default: %(default)s)', default='out', metavar='DIR')
+    parser_generate_neighbors.add_argument('--grid', dest='grid', action='store_true', help='Add flag to save the generated images in a grid')
+    parser_generate_neighbors.add_argument('--label', dest='draw_label', action='store_true', help='Add flag to draw the the seed number on each image')
     parser_generate_neighbors.set_defaults(func=generate_neighbors)
 
     parser_lerp_video = subparsers.add_parser('lerp-video', help='Generate interpolation video (lerp) between random vectors')
