@@ -1,6 +1,6 @@
-# TODO
+# My Changes
 * bug fixes regarding saving and using npy vector files.
-* add helpful changes to the generate.py:
+* added helpful changes to the generate.py:
     * draw seed number on each image using grid
 
 ## dvschultz Original Edits
